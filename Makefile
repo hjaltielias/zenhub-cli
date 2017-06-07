@@ -17,6 +17,11 @@ else ifeq (${uname}, Linux)
 	@$(eval _etcdir := $(shell readlink -f ${etcdir}))
 	@sed -i "s|bindir=|bindir=${_bindir}|g" ${bindir}/zenhub
 	@sed -i "s|etcdir=|etcdir=${_etcdir}|g" ${bindir}/zenhub
+else ifneq (,$(findstring CYGWIN, ${uname}))
+	@$(eval _bindir := $(shell readlink -f ${bindir}))
+	@$(eval _etcdir := $(shell readlink -f ${etcdir}))
+	@sed -i "s|bindir=|bindir=${_bindir}|g" ${bindir}/zenhub
+	@sed -i "s|etcdir=|etcdir=${_etcdir}|g" ${bindir}/zenhub
 endif
 
 stub:
