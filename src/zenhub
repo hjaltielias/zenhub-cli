@@ -21,6 +21,7 @@ while (( "$#" )); do
     --filter=*) filter=${1/--filter=/''} ; shift ;;
     --github-token=*) ghtoken=${1/--github-token=/''} ; shift ;;
     --issue=*) issue=${1/--issue=/''} ; shift ;;
+    --pipeline=*) pipeline=${1/--pipeline=/''} ; shift ;;
     --monochrome) monochrome='-M' ; shift ;;
     --project=*) project=${1/--project=/''} ; shift ;;
     --zenhub-token=*) zhtoken=${1/--zenhub-token=/''} ; shift ;;
@@ -28,21 +29,25 @@ while (( "$#" )); do
     -f*) filter=${2} ; shift ; shift ;;
     -G*) ghtoken=${2} ; shift ; shift ;;
     -i*) issue=${2} ; shift ; shift ;;
+    -P*) pipeline=${2} ; shift ; shift ;;
     -m) monochrome='-M' ; shift ;;
     -p*) project=${2} ; shift ; shift ;;
     -Z*) zhtoken=${2} ; shift ; shift ;;
     --)
       case "${cmd}" in
-        board|events|issue) test -z "${project}" && project=$(placehold-project) ;;
+        board|events|issue|transfer) test -z "${project}" && project=$(placehold-project) ;;
       esac
       shift
     ;;
     *)
       case "${cmd}" in
-        events|issue) test -n "${1}" && test -n "${project}" && issue=${1} ;;
+        transfer) test -n "${1}" && test -n "${project}" && test -n "${issue}" && pipeline=${1} ;;
       esac
       case "${cmd}" in
-        board|events|issue) test -n "${1}" && test -z "${project}" && project=${1} ;;
+        events|issue|transfer) test -n "${1}" && test -n "${project}" && test -z "${pipeline}" && issue=${1} ;;
+      esac
+      case "${cmd}" in
+        board|events|issue|transfer) test -n "${1}" && test -z "${project}" && project=${1} ;;
       esac
       shift
     ;;
@@ -64,13 +69,18 @@ case "${cmd}" in
   ;;
 esac
 case "${cmd}" in
-  board|events|issue)
+  board|events|issue|transfer)
     test -z "${project}" && read -e -p 'Enter project slug (e.g. rockymadden/zenhub-cli): ' project
   ;;
 esac
 case "${cmd}" in
-  events|issue)
+  events|issue|transfer)
     test -z "${issue}" && read -e -p 'Enter issue (e.g. 123): ' issue
+  ;;
+esac
+case "${cmd}" in
+  transfer)
+    test -z "${pipeline}" && read -e -p 'Enter pipeline name (e.g. QA): ' pipeline
   ;;
 esac
 
@@ -87,6 +97,19 @@ function jqify() {
     ;;
   esac
 
+  case "${1}" in
+    POST)
+      local rsp
+      rsp=$(\
+        curl -f -s \
+          -H 'Content-Type: application/json' \
+          -H "X-Authentication-Token: ${zhtoken}" \
+          -X POST \
+          -d ${3} \
+          "${2}")
+      ;;
+  esac
+
   case "$?" in
     0) echo ${rsp} | jq -r ${compact} ${monochrome} "${filter:=.}" ;;
     *) return 1 ;;
@@ -96,6 +119,11 @@ function jqify() {
 function lookup-project-id() {
   curl -f -s -H "Authorization: token ${ghtoken}" "https://api.github.com/repos/${1}" | \
   jq -r -c -M '.id'
+}
+
+function lookup-pipeline-id() {
+  curl -f -s -H "Accept: application/json" -H "X-Authentication-Token: ${zhtoken}" "https://api.zenhub.io/p1/repositories/${1}/board" | \
+  jq -r -c -M ".pipelines[] | select(.name == \"${2}\") | .id"
 }
 
 ## Command functions ##############################################################################
@@ -119,6 +147,7 @@ function help() {
   echo "  ${bin} init [--compact|-c] [--filter|-f <filter>] [--github-token|-G <token>] [--monochrome|-m]"
   echo '    [--zenhub-token|-Z <token>]'
   echo "  ${bin} issue <project> <issue> [--compact|-c] [--filter|-f <filter>] [--monochrome|-m]"
+  echo "  ${bin} transfer <project> <issue> <pipeline>"
   echo
   echo 'Configuration Commands:'
   echo '  init    Initialize'
@@ -127,6 +156,7 @@ function help() {
   echo '  board     Project board pipelines plus the issues contained within each pipeline'
   echo '  events    Project issue events, sorted by most recent'
   echo '  issue     Project issue time estimate, pipeline, and +1s'
+  echo '  transfer  Moving project issues between pipelines'
 }
 
 function init() {
@@ -144,6 +174,12 @@ function issue() {
   jqify GET "https://api.zenhub.io/p1/repositories/${pid}/issues/${issue}"
 }
 
+function transfer() {
+  local pid=$(lookup-project-id ${project})
+  local pipeid=$(lookup-pipeline-id ${pid} "${pipeline}")
+  jqify POST "https://api.zenhub.io/p1/repositories/${pid}/issues/${issue}/moves" "{\"pipeline_id\":\"${pipeid}\",\"position\":\"bottom\"}"
+}
+
 function version() {
   echo 'v0.1.0'
 }
@@ -152,6 +188,6 @@ function version() {
 case "${cmd}" in
   --help|-h) help ; exit 0 ;;
   --version|-v) version ; exit 0 ;;
-  board|events|init|issue) "${cmd}" ; exit "$?" ;;
+  board|events|init|issue|transfer) "${cmd}" ; exit "$?" ;;
   *) help ; exit 1 ;;
 esac
